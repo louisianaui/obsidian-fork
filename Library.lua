@@ -1734,6 +1734,66 @@ function Library:ApplyLucideIcon(ImageGui: any, Icon: any, Rotation: number?)
 end
 
 --// Main Instances \\-
+--// Hardened host resolution \\--
+-- On newer clients/executor builds, parenting into a capability-gated host
+-- (gethui()/CoreGui) can succeed while every later property write on the UI
+-- under it throws "The current thread cannot access 'Instance' (lacking
+-- capability ...)". SafeParentUI's parent-failure fallback is not enough:
+-- the poison shows up one write later. Probe the host ONCE by actually
+-- parenting + writing under it, then route every UI through a verified host.
+local VerifiedHost: Instance? = nil
+
+local function ProbeHostWritable(Host: Instance): boolean
+    if not Host then
+        return false
+    end
+
+    return pcall(function()
+        local Probe = Instance.new("ScreenGui")
+        Probe.Name = "ObsidianHostProbe"
+        Probe.ResetOnSpawn = false
+        Probe.Parent = Host
+
+        local Frame = Instance.new("Frame")
+        Frame.Parent = Probe
+        Frame.Position = UDim2.fromOffset(1, 1) -- descendant property write under the host
+
+        Probe:Destroy()
+    end)
+end
+
+local function ResolveUIHost(): Instance
+    if VerifiedHost and VerifiedHost.Parent ~= nil then
+        return VerifiedHost
+    end
+
+    -- candidate 1: executor hidden UI (gethui)
+    local HiddenHost = nil
+    pcall(function()
+        if typeof(gethui) == "function" then
+            local Result = gethui()
+            if typeof(Result) == "Instance" then
+                HiddenHost = Result
+            end
+        end
+    end)
+
+    if HiddenHost and HiddenHost ~= CoreGui and ProbeHostWritable(HiddenHost) then
+        VerifiedHost = HiddenHost
+        return VerifiedHost
+    end
+
+    -- candidate 2: CoreGui (only if actually writable)
+    if ProbeHostWritable(CoreGui) then
+        VerifiedHost = CoreGui
+        return VerifiedHost
+    end
+
+    -- candidate 3: PlayerGui — always writable from the local thread
+    VerifiedHost = Library.LocalPlayer:WaitForChild("PlayerGui", math.huge)
+    return VerifiedHost
+end
+
 local function SafeParentUI(Instance: Instance, Parent: Instance | () -> Instance)
     local success, _error = pcall(function()
         if not Parent then
@@ -1757,12 +1817,16 @@ end
 
 local function ParentUI(UI: Instance, SkipHiddenUI: boolean?)
     if SkipHiddenUI then
-        SafeParentUI(UI, CoreGui)
+        SafeParentUI(UI, function()
+            return ResolveUIHost()
+        end)
         return
     end
 
     pcall(protectgui, UI)
-    SafeParentUI(UI, gethui)
+    SafeParentUI(UI, function()
+        return ResolveUIHost()
+    end)
 end
 
 local function SetAlwaysOnTop(Gui: ScreenGui, Enabled: boolean)
