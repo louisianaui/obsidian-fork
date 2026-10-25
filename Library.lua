@@ -1778,19 +1778,32 @@ local function ResolveUIHost(): Instance
         end
     end)
 
-    if HiddenHost and HiddenHost ~= CoreGui and ProbeHostWritable(HiddenHost) then
-        VerifiedHost = HiddenHost
-        return VerifiedHost
+    if HiddenHost and HiddenHost ~= CoreGui then
+        local writable = ProbeHostWritable(HiddenHost)
+        print(("[obsidian-fork] host probe gethui -> %s (writable=%s)")
+            :format(tostring(pcall(function() return HiddenHost:GetFullName() end)), tostring(writable)))
+        if writable then
+            VerifiedHost = HiddenHost
+            return VerifiedHost
+        end
+    else
+        print("[obsidian-fork] host probe gethui -> unavailable (or CoreGui alias)")
     end
 
     -- candidate 2: CoreGui (only if actually writable)
-    if ProbeHostWritable(CoreGui) then
-        VerifiedHost = CoreGui
-        return VerifiedHost
+    do
+        local writable = ProbeHostWritable(CoreGui)
+        print(("[obsidian-fork] host probe CoreGui -> writable=%s"):format(tostring(writable)))
+        if writable then
+            VerifiedHost = CoreGui
+            return VerifiedHost
+        end
     end
 
     -- candidate 3: PlayerGui — always writable from the local thread
     VerifiedHost = Library.LocalPlayer:WaitForChild("PlayerGui", math.huge)
+    print(("[obsidian-fork] host resolved -> PlayerGui (%s)")
+        :format(tostring(pcall(function() return VerifiedHost:GetFullName() end))))
     return VerifiedHost
 end
 
